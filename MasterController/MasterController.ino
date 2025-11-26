@@ -237,6 +237,14 @@ float readSensorMedianCm(int trigPin, int echoPin, int samples) {
   return (distanceCm + SENSOR_OFFSET_CM) * SENSOR_SCALE;
 }
 
+void printDistance(float d) {
+  if (d < 0) Serial.print("NO READING");
+  else {
+    Serial.print(d, 1);
+    Serial.print("cm");
+  }
+}
+
 // ========== BLUETOOTH CONTROL ==========
 void handleBluetoothCommand() {
   char command = Serial1.read();
