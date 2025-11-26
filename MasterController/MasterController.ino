@@ -2,14 +2,10 @@
 
 // ========== PIN DEFINITIONS ==========
 // Sensors
-const int TRIG1 = 2;
-const int ECHO1 = 3;
-const int TRIG2 = 4;
-const int ECHO2 = 5;
-const int TRIG3 = 6;
-const int ECHO3 = 7;
-const int TRIG4 = 8;
-const int ECHO4 = 9;
+const int TRIG1 = 2; const int ECHO1 = 3;
+const int TRIG2 = 4; const int ECHO2 = 5;
+const int TRIG3 = 6; const int ECHO3 = 7;
+const int TRIG4 = 8; const int ECHO4 = 9;
 
 // Motor and Servo
 const byte ESC_PIN = 10;      // ESC pin for motor
@@ -24,7 +20,6 @@ const int PULSE_MAX = 2000;      // Full Forward
 const unsigned long READ_INTERVAL = 250;
 const int SAMPLES = 9;
 const unsigned long TIMEOUT = 30000UL;
-const int INTER_SENSOR_DELAY = 100;
 
 // Sensor Calibration
 float SENSOR_OFFSET_CM = 0.0;
@@ -63,6 +58,9 @@ const unsigned long forwardTime  = 2000;
 const unsigned long turningTime  = 2000;
 const unsigned long pauseTime    = 5000;
 
+// serial buffer
+String serialBuffer = "";
+
 // ========== SETUP ==========
 void setup() {
   Serial.begin(9600);
@@ -85,7 +83,7 @@ void setup() {
   Serial.println("=== ARDUINO CAR MASTER CONTROL ===");
   Serial.println("Arming ESC...");
   esc.writeMicroseconds(PULSE_NEUTRAL);
-  delay(3000);
+  delay(1500);
   Serial.println("Ready!");
   
   delay(50);
@@ -93,6 +91,8 @@ void setup() {
 
 // ========== MAIN LOOP ==========
 void loop() {
+  unsigned long now = millis();
+
   // Read sensors periodically
   if (every(lastSensorRead, intervalSensors)) {
     readAndCheckSensors();
@@ -179,11 +179,8 @@ void readAndCheckSensors() {
   if (!DEBUG_SENSORS) return;
   
   float d1 = readSensorMedianCm(TRIG1, ECHO1, SAMPLES);
-  delay(INTER_SENSOR_DELAY);
   float d2 = readSensorMedianCm(TRIG2, ECHO2, SAMPLES);
-  delay(INTER_SENSOR_DELAY);
   float d3 = readSensorMedianCm(TRIG3, ECHO3, SAMPLES);
-  delay(INTER_SENSOR_DELAY);
   float d4 = readSensorMedianCm(TRIG4, ECHO4, SAMPLES);
   
   Serial.print("S1: "); printDistance(d1);
@@ -208,7 +205,7 @@ float readSensorMedianCm(int trigPin, int echoPin, int samples) {
   if (samples > 31) samples = 31;
   for (int i = 0; i < samples; i++) {
     arr[i] = singlePulseDuration(trigPin, echoPin);
-    delay(20);
+    delayMicroseconds(800);
   }
   int n = samples;
   for (int i = 0; i < n - 1; i++) {
@@ -296,59 +293,37 @@ void handleBluetoothCommand() {
 
 // ========== SERIAL MONITOR CONTROL ==========
 void handleSerialCommand() {
-  String input = Serial.readStringUntil('\n');
-  input.trim();
-  
-  // Check for autonomous mode toggle
-  if (input.equalsIgnoreCase("AUTO")) {
-    autonomousMode = !autonomousMode;
-    Serial.print("Autonomous Mode: ");
-    Serial.println(autonomousMode ? "ON" : "OFF");
-    return;
-  }
-  
-  // Manual control disables autonomous mode
-  autonomousMode = false;
-  
-  // Parse command format: "SPEED ANGLE" or single value
-  int spaceIndex = input.indexOf(' ');
-  
-  if (spaceIndex > 0) {
-    // Format: "SPEED ANGLE"
-    int val1 = input.substring(0, spaceIndex).toInt();
-    int val2 = input.substring(spaceIndex + 1).toInt();
-    
-    if (val1 >= PULSE_MIN && val1 <= PULSE_MAX) {
-      setSpeed(val1);
-      if (DEBUG_SERIAL) {
-        Serial.print("Speed: ");
-        Serial.print(val1);
+  static String input = "";
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (input.length() > 0) {
+        input.trim();
+
+        int space = input.indexOf(' ');
+        if (space > 0) {
+          String part1 = input.substring(0, space);
+          String part2 = input.substring(space + 1);
+          int val1 = part1.toInt();
+          int val2 = part2.toInt();
+
+          if (val1 >= PULSE_MIN && val1 <= PULSE_MAX) {
+            setSpeed(val1);
+            if (val2 >= 0 && val2 <= 180) setSteering(val2);
+          }
+          else if (val1 >= 0 && val1 <= 180) {
+            setSteering(val1);
+            if (val2 >= PULSE_MIN && val2 <= PULSE_MAX) setSpeed(val2);
+          }
+        } else {
+          int val = input.toInt();
+          if (val >= PULSE_MIN && val <= PULSE_MAX) setSpeed(val);
+          else if (val >= 0 && val <= 180) setSteering(val);
+        }
+        input = "";
       }
-    }
-    
-    if (val2 > 0 && val2 < 180) {
-      setSteering(val2);
-      if (DEBUG_SERIAL) {
-        Serial.print(" | Angle: ");
-        Serial.print(val2);
-      }
-    }
-  } else {
-    // Single value
-    int value = input.toInt();
-    
-    if (value > 0 && value < 180) {
-      setSteering(value);
-      if (DEBUG_SERIAL) {
-        Serial.print("Angle: ");
-        Serial.print(value);
-      }
-    } else if (value >= PULSE_MIN && value <= PULSE_MAX) {
-      setSpeed(value);
-      if (DEBUG_SERIAL) {
-        Serial.print("Speed: ");
-        Serial.print(value);
-      }
+    } else if (input.length() < 30) {
+      input += c;
     }
   }
 }
