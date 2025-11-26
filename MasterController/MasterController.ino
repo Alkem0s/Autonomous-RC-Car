@@ -18,7 +18,7 @@ const int PULSE_MAX = 2000;      // Full Forward
 
 // ========== SENSOR SETTINGS ==========
 const unsigned long READ_INTERVAL = 250;
-const int SAMPLES = 9;
+const int SAMPLES = 12;
 const unsigned long TIMEOUT = 30000UL;
 
 // Sensor Calibration
@@ -203,13 +203,23 @@ unsigned long singlePulseDuration(int trigPin, int echoPin) {
 float readSensorMedianCm(int trigPin, int echoPin, int samples) {
   unsigned long arr[31];
   if (samples > 31) samples = 31;
+  int validCount = 0;
+
   for (int i = 0; i < samples; i++) {
-    arr[i] = singlePulseDuration(trigPin, echoPin);
+    unsigned long dur = singlePulseDuration(trigPin, echoPin);
+
+    // Ignore invalid or extreme readings
+    if (dur > 0 && dur < TIMEOUT) {
+      arr[validCount++] = dur;
+    }
+
     delayMicroseconds(800);
   }
-  int n = samples;
-  for (int i = 0; i < n - 1; i++) {
-    for (int j = i + 1; j < n; j++) {
+
+  if (validCount == 0) return -1;
+
+  for (int i = 0; i < validCount - 1; i++) {
+    for (int j = i + 1; j < validCount; j++) {
       if (arr[j] < arr[i]) {
         unsigned long t = arr[i];
         arr[i] = arr[j];
@@ -217,18 +227,14 @@ float readSensorMedianCm(int trigPin, int echoPin, int samples) {
       }
     }
   }
-  unsigned long medianDur;
-  if (n % 2 == 1) medianDur = arr[n / 2];
-  else medianDur = (arr[n / 2 - 1] + arr[n / 2]) / 2;
-  return (medianDur + SENSOR_OFFSET_CM) * SENSOR_SCALE;
-}
 
-void printDistance(float d) {
-  if (d < 0) Serial.print("ERROR");
-  else {
-    Serial.print(d, 1);
-    Serial.print("cm");
-  }
+  unsigned long medianDur;
+  if (validCount % 2 == 1) medianDur = arr[validCount / 2];
+  else medianDur = (arr[validCount / 2 - 1] + arr[validCount / 2]) / 2;
+
+  // Convert duration to cm: speed of sound ~343 m/s
+  float distanceCm = medianDur / 58.0; // typical for HC-SR04
+  return (distanceCm + SENSOR_OFFSET_CM) * SENSOR_SCALE;
 }
 
 // ========== BLUETOOTH CONTROL ==========
@@ -293,37 +299,61 @@ void handleBluetoothCommand() {
 
 // ========== SERIAL MONITOR CONTROL ==========
 void handleSerialCommand() {
-  static String input = "";
+  static char buf[32];
+  static uint8_t idx = 0;
+
   while (Serial.available()) {
     char c = Serial.read();
-    if (c == '\n' || c == '\r') {
-      if (input.length() > 0) {
-        input.trim();
 
-        int space = input.indexOf(' ');
-        if (space > 0) {
-          String part1 = input.substring(0, space);
-          String part2 = input.substring(space + 1);
-          int val1 = part1.toInt();
-          int val2 = part2.toInt();
+    if (c == '\r') {
+      continue;   // ignore CR
+    }
 
-          if (val1 >= PULSE_MIN && val1 <= PULSE_MAX) {
-            setSpeed(val1);
-            if (val2 >= 0 && val2 <= 180) setSteering(val2);
-          }
-          else if (val1 >= 0 && val1 <= 180) {
-            setSteering(val1);
-            if (val2 >= PULSE_MIN && val2 <= PULSE_MAX) setSpeed(val2);
+    if (c == '\n') {
+      buf[idx] = 0;
+
+      if (idx > 0) {
+        // parse
+        int v1 = 0;
+        int v2 = 0;
+        bool hasSecond = false;
+
+        // find space
+        char *space = strchr(buf, ' ');
+        if (space) {
+          *space = 0;
+          space++;
+
+          if (isNumber(buf)) v1 = atoi(buf);
+          if (isNumber(space)) {
+            v2 = atoi(space);
+            hasSecond = true;
           }
         } else {
-          int val = input.toInt();
-          if (val >= PULSE_MIN && val <= PULSE_MAX) setSpeed(val);
-          else if (val >= 0 && val <= 180) setSteering(val);
+          if (isNumber(buf)) v1 = atoi(buf);
         }
-        input = "";
+
+        // apply logic
+        if (hasSecond) {
+          if (v1 >= PULSE_MIN && v1 <= PULSE_MAX) {
+            setSpeed(v1);
+            if (v2 >= 0 && v2 <= 180) setSteering(v2);
+          } else if (v1 >= 0 && v1 <= 180) {
+            setSteering(v1);
+            if (v2 >= PULSE_MIN && v2 <= PULSE_MAX) setSpeed(v2);
+          }
+        } else {
+          if (v1 >= PULSE_MIN && v1 <= PULSE_MAX) setSpeed(v1);
+          else if (v1 >= 0 && v1 <= 180) setSteering(v1);
+        }
       }
-    } else if (input.length() < 30) {
-      input += c;
+
+      idx = 0;
+      continue;
+    }
+
+    if (idx < sizeof(buf) - 1) {
+      buf[idx++] = c;
     }
   }
 }
@@ -347,4 +377,16 @@ bool every(unsigned long &last, unsigned long interval) {
     return true;
   }
   return false;
+}
+
+bool isNumber(const char *s) {
+  if (*s == 0) return false;
+  if (*s == '+' || *s == '-') s++;
+  if (*s == 0) return false;
+
+  while (*s) {
+    if (*s < '0' || *s > '9') return false;
+    s++;
+  }
+  return true;
 }
