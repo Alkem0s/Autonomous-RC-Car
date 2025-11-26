@@ -51,6 +51,18 @@ int currentAngle = 90;  // Center position
 
 bool autonomousMode = false;
 
+// ========== RECTANGLE MODE FLAGS ==========
+bool rectangleMode = true;
+bool repeatRectangle = false;
+
+unsigned long lastRectStateChange = 0;
+int rectSide = 0;
+enum RectState { RECT_FORWARD, RECT_TURNING, RECT_PAUSED } rectState = RECT_FORWARD;
+
+const unsigned long forwardTime  = 2000;
+const unsigned long turningTime  = 2000;
+const unsigned long pauseTime    = 5000;
+
 // ========== SETUP ==========
 void setup() {
   Serial.begin(9600);
@@ -100,11 +112,66 @@ void loop() {
   if (Serial.available()) {
     handleSerialCommand();
   }
+
+  driveRectangleMode();
 }
 
 // ========== AUTONOMOUS CONTROL ==========
 void autonomousSteering() {
   // Placeholder: Do nothing for now
+}
+
+// ========== RECTANGLE DRIVER ==========
+void driveRectangleMode() {
+  if (!rectangleMode) return;
+
+  unsigned long now = millis();
+
+  switch (rectState) {
+    case RECT_FORWARD:
+      if (every(lastRectStateChange, forwardTime)) {
+        setSteering(45);
+        rectState = RECT_TURNING;
+        lastRectStateChange = now;
+      }
+      break;
+
+    case RECT_TURNING:
+      if (every(lastRectStateChange, turningTime)) {
+        setSteering(90);
+        rectSide++;
+
+        if (rectSide >= 4) {
+          // Completed one full rectangle
+          setSpeed(PULSE_NEUTRAL);
+          rectState = RECT_PAUSED;
+          lastRectStateChange = now;
+          if (!repeatRectangle) {
+            rectangleMode = false;
+          }
+        } else {
+          rectState = RECT_FORWARD;
+          lastRectStateChange = now;
+        }
+      }
+      break;
+
+    case RECT_PAUSED:
+      if (every(lastRectStateChange, pauseTime)) {
+        // Pause finished → start next rectangle (if repeating)
+        if (repeatRectangle) {
+          rectSide = 0;
+          rectState = RECT_FORWARD;
+          setSpeed(1550);
+          lastRectStateChange = now;
+        }
+      }
+      break;
+  }
+
+  if (rectState == RECT_FORWARD || rectState == RECT_TURNING) {
+    setSpeed(1550);
+  }
 }
 
 // ========== SENSOR FUNCTIONS ==========
